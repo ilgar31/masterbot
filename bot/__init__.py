@@ -1,0 +1,2 @@
+"""Clinic subscription bot."""
+
