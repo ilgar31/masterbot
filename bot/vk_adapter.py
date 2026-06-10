@@ -38,6 +38,10 @@ class VkMessenger:
         response.raise_for_status()
         data = response.json()
         if "error" in data:
+            error = data["error"]
+            if error.get("error_code") == 912 and keyboard:
+                self.send_message(peer_id=peer_id, text=text, keyboard=None)
+                return
             raise RuntimeError(f"VK API error: {data['error']}")
 
 
