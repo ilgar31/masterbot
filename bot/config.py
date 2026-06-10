@@ -38,6 +38,7 @@ class Settings:
     database_path: str
     consent_file: str
     vk_group_token: str | None
+    vk_group_id: str | None
     vk_confirmation_token: str | None
     vk_secret_key: str | None
     vk_api_version: str
@@ -64,6 +65,7 @@ class Settings:
             database_path=os.getenv("BOT_DATABASE_PATH", "data/bot.sqlite3"),
             consent_file=os.getenv("BOT_CONSENT_FILE", "consent.txt"),
             vk_group_token=os.getenv("VK_GROUP_TOKEN"),
+            vk_group_id=os.getenv("VK_GROUP_ID"),
             vk_confirmation_token=os.getenv("VK_CONFIRMATION_TOKEN"),
             vk_secret_key=os.getenv("VK_SECRET_KEY"),
             vk_api_version=os.getenv("VK_API_VERSION", "5.199"),

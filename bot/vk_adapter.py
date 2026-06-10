@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -40,6 +41,27 @@ class VkMessenger:
             raise RuntimeError(f"VK API error: {data['error']}")
 
 
+def _vk_api_call(
+    session: requests.Session,
+    method: str,
+    payload: dict[str, Any],
+    timeout: float = 10,
+) -> dict[str, Any]:
+    response = session.post(
+        f"https://api.vk.com/method/{method}",
+        data=payload,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    data = response.json()
+    if "error" in data:
+        raise RuntimeError(f"VK API error: {data['error']}")
+    result = data.get("response")
+    if not isinstance(result, dict):
+        raise RuntimeError(f"VK API returned unexpected response for {method}: {data}")
+    return result
+
+
 def _parse_payload(raw: Any) -> dict[str, Any] | None:
     if isinstance(raw, dict):
         return raw
@@ -62,6 +84,34 @@ def _extract_phone(message: dict[str, Any]) -> str | None:
             if phone:
                 return str(phone)
     return None
+
+
+def handle_vk_message_event(
+    event: dict[str, Any],
+    engine: BotEngine,
+    messenger: VkMessenger,
+) -> None:
+    obj = event.get("object") or {}
+    message = obj.get("message") if isinstance(obj, dict) else {}
+    if not isinstance(message, dict):
+        return
+
+    peer_id = int(message.get("peer_id") or message.get("from_id"))
+    user_id = str(message.get("from_id") or peer_id)
+    incoming = IncomingMessage(
+        platform="vk",
+        user_id=user_id,
+        text=str(message.get("text") or ""),
+        payload=_parse_payload(message.get("payload")),
+        phone=_extract_phone(message),
+    )
+    replies = engine.handle(incoming)
+    for reply in replies:
+        messenger.send_message(
+            peer_id=peer_id,
+            text=reply.text,
+            keyboard=to_vk_keyboard(reply.keyboard),
+        )
 
 
 def make_vk_handler(settings: Settings, engine: BotEngine) -> type[BaseHTTPRequestHandler]:
@@ -104,34 +154,11 @@ def make_vk_handler(settings: Settings, engine: BotEngine) -> type[BaseHTTPReque
                 return
 
             if event_type == "message_new":
-                self._handle_message_new(event)
+                handle_vk_message_event(event, engine, messenger)
                 self._send_text(200, "ok")
                 return
 
             self._send_text(200, "ok")
-
-        def _handle_message_new(self, event: dict[str, Any]) -> None:
-            obj = event.get("object") or {}
-            message = obj.get("message") if isinstance(obj, dict) else {}
-            if not isinstance(message, dict):
-                return
-
-            peer_id = int(message.get("peer_id") or message.get("from_id"))
-            user_id = str(message.get("from_id") or peer_id)
-            incoming = IncomingMessage(
-                platform="vk",
-                user_id=user_id,
-                text=str(message.get("text") or ""),
-                payload=_parse_payload(message.get("payload")),
-                phone=_extract_phone(message),
-            )
-            replies = engine.handle(incoming)
-            for reply in replies:
-                messenger.send_message(
-                    peer_id=peer_id,
-                    text=reply.text,
-                    keyboard=to_vk_keyboard(reply.keyboard),
-                )
 
         def _send_text(self, status: int, text: str) -> None:
             body = text.encode("utf-8")
@@ -153,3 +180,80 @@ def run_vk_callback_server(settings: Settings, engine: BotEngine) -> None:
     print(f"VK Callback сервер запущен: http://{settings.host}:{settings.port}/vk/callback")
     server.serve_forever()
 
+
+class VkLongPollRunner:
+    def __init__(self, settings: Settings, engine: BotEngine) -> None:
+        if not settings.vk_group_token:
+            raise RuntimeError("Не задан VK_GROUP_TOKEN.")
+        if not settings.vk_group_id:
+            raise RuntimeError("Не задан VK_GROUP_ID. Для вашего сообщества это 238688218.")
+
+        self.settings = settings
+        self.engine = engine
+        self.session = requests.Session()
+        self.messenger = VkMessenger(settings.vk_group_token, settings.vk_api_version)
+        self.server = ""
+        self.key = ""
+        self.ts = ""
+
+    def refresh_server(self) -> None:
+        data = _vk_api_call(
+            self.session,
+            "groups.getLongPollServer",
+            {
+                "access_token": self.settings.vk_group_token,
+                "v": self.settings.vk_api_version,
+                "group_id": self.settings.vk_group_id,
+            },
+        )
+        self.server = str(data["server"])
+        self.key = str(data["key"])
+        self.ts = str(data["ts"])
+
+    def poll_once(self) -> None:
+        response = self.session.get(
+            self.server,
+            params={
+                "act": "a_check",
+                "key": self.key,
+                "ts": self.ts,
+                "wait": 25,
+            },
+            timeout=35,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        failed = data.get("failed")
+        if failed == 1:
+            self.ts = str(data["ts"])
+            return
+        if failed in {2, 3}:
+            self.refresh_server()
+            return
+        if failed:
+            raise RuntimeError(f"VK Long Poll failed: {data}")
+
+        self.ts = str(data["ts"])
+        updates = data.get("updates") or []
+        for update in updates:
+            if isinstance(update, dict) and update.get("type") == "message_new":
+                handle_vk_message_event(update, self.engine, self.messenger)
+
+    def run_forever(self) -> None:
+        self.refresh_server()
+        print("VK Long Poll запущен. Домен и Callback API не нужны.")
+        while True:
+            try:
+                self.poll_once()
+            except KeyboardInterrupt:
+                print("VK Long Poll остановлен.")
+                return
+            except Exception as exc:
+                print(f"Ошибка VK Long Poll: {exc}")
+                time.sleep(5)
+                self.refresh_server()
+
+
+def run_vk_longpoll(settings: Settings, engine: BotEngine) -> None:
+    VkLongPollRunner(settings=settings, engine=engine).run_forever()

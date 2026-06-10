@@ -9,7 +9,7 @@ from bot.config import Settings
 from bot.handlers import BotEngine, IncomingMessage
 from bot.keyboards import render_cli_options
 from bot.storage import Storage
-from bot.vk_adapter import run_vk_callback_server
+from bot.vk_adapter import run_vk_callback_server, run_vk_longpoll
 
 
 def build_engine(settings: Settings) -> BotEngine:
@@ -46,9 +46,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Чат-бот клиники")
     parser.add_argument(
         "--mode",
-        choices=("vk", "admin", "all", "cli"),
-        default="vk",
-        help="Что запускать: VK Callback сервер, админку, оба сервиса или CLI-режим.",
+        choices=("vk", "longpoll", "admin", "all", "cli"),
+        default="longpoll",
+        help="Что запускать: VK Long Poll, VK Callback сервер, админку, оба сервиса или CLI-режим.",
     )
     args = parser.parse_args()
 
@@ -63,6 +63,10 @@ def main() -> None:
         run_admin_server(settings=settings, storage=engine.storage)
         return
 
+    if args.mode == "longpoll":
+        run_vk_longpoll(settings=settings, engine=engine)
+        return
+
     if args.mode == "all" and settings.admin_enabled:
         admin_thread = threading.Thread(
             target=run_admin_server,
@@ -71,6 +75,10 @@ def main() -> None:
         )
         admin_thread.start()
         print(f"Админка запущена: http://{settings.admin_host}:{settings.admin_port}/")
+
+    if args.mode == "all":
+        run_vk_longpoll(settings=settings, engine=engine)
+        return
 
     run_vk_callback_server(settings=settings, engine=engine)
 
