@@ -184,6 +184,11 @@ class ClinicApiClient:
         data = self._request("POST", "/clients/", json=self._client_payload(payload))
         return data if isinstance(data, dict) else {}
 
+    def find_client_by_phone(self, phone: str) -> dict[str, Any] | None:
+        normalized = phone if phone.startswith("+") else f"+{phone}"
+        data = self._request("GET", f"/clients/phone/exact/{normalized}/", allow_404=True)
+        return data if isinstance(data, dict) else None
+
     def get_client(self, client_id: str) -> dict[str, Any] | None:
         data = self._request("GET", f"/clients/{client_id}", allow_404=True)
         return data if isinstance(data, dict) else None

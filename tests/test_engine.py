@@ -19,6 +19,12 @@ class FakeApi:
         self.clients[client_id] = {"id": client_id, **payload}
         return {"id": client_id}
 
+    def find_client_by_phone(self, phone: str) -> dict[str, Any] | None:
+        for client in self.clients.values():
+            if str(client.get("phone")) == phone:
+                return client
+        return None
+
     def list_subscriptions(self) -> list[dict[str, Any]]:
         return [
             {
@@ -44,6 +50,9 @@ class FakeApi:
 
 
 class FailingCreateApi(FakeApi):
+    def find_client_by_phone(self, phone: str) -> dict[str, Any] | None:
+        return None
+
     def create_client(self, payload: dict[str, Any]) -> dict[str, Any]:
         raise ApiError('API вернуло 404: {"detail":"Not Found"}', status_code=404)
 
@@ -145,14 +154,12 @@ class EngineTest(unittest.TestCase):
         self.assertIn("ЮKassa", connected[0].text)
         self.assertEqual(self.api.connected, [("client-1", "sub-1")])
 
-    def test_registration_falls_back_when_create_client_404(self) -> None:
+    def test_registration_stops_when_create_client_404(self) -> None:
         engine = BotEngine(self.storage, FailingCreateApi(), str(self.test_dir / "consent_test.txt"))  # type: ignore[arg-type]
         self.register_user(engine)
         user = self.storage.get_or_create_user("vk", "42")
-        self.assertEqual(user["client_id"], "local:79000000000")
-
-        menu = engine.handle(IncomingMessage("vk", "42", payload={"action": "my_subscription"}))
-        self.assertIn("сохранен только в боте", menu[0].text)
+        self.assertIsNone(user["client_id"])
+        self.assertEqual(user["state"], "awaiting_email")
 
 
 if __name__ == "__main__":

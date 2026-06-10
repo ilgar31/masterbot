@@ -325,28 +325,36 @@ class BotEngine:
             "email": email,
         }
         try:
-            response = self.api.create_client(payload)
+            response = self.api.find_client_by_phone(phone) or self.api.create_client(payload)
             client_id = pick_id(response)
-            api_synced = True
         except ApiError as exc:
-            client_id = f"local:{phone}"
-            api_synced = False
             self.storage.append_audit(
                 actor=f"{message.platform}:{message.user_id}",
                 action="client.register_api_failed",
-                subject=client_id,
+                subject=phone,
                 details={"phone": phone, "error": str(exc), "status_code": exc.status_code},
             )
+            return [
+                BotReply(
+                    "Не получилось сохранить профиль в API. Проверьте, пожалуйста, номер и попробуйте еще раз чуть позже.\n\n"
+                    "Данные в подписках берутся только из API, поэтому без успешного сохранения в backend я не буду создавать локальный профиль.",
+                    phone_keyboard(),
+                )
+            ]
 
         if not client_id:
-            client_id = f"local:{phone}"
-            api_synced = False
             self.storage.append_audit(
                 actor=f"{message.platform}:{message.user_id}",
                 action="client.register_api_missing_id",
-                subject=client_id,
+                subject=phone,
                 details={"phone": phone},
             )
+            return [
+                BotReply(
+                    "API создало или нашло клиента, но не вернуло `id`. Без `id` я не смогу получить подписку и привязать профиль.",
+                    phone_keyboard(),
+                )
+            ]
 
         updated = self.storage.update_user(
             user["id"],
@@ -359,21 +367,15 @@ class BotEngine:
         )
         self.storage.append_audit(
             actor=f"{message.platform}:{message.user_id}",
-            action="client.registered" if api_synced else "client.registered_local",
+            action="client.registered",
             subject=client_id,
-            details={"phone": phone, "api_synced": api_synced},
+            details={"phone": phone, "api_synced": True},
         )
         template = self.storage.get_notification_template(
             "registration_success",
             "✅ Готово, {name}! Теперь можно посмотреть подписку или выбрать абонемент.",
         )
         text = safe_format(template, name=updated.get("full_name") or "готово", phone=display_phone(phone))
-        if not api_synced:
-            text += (
-                "\n\n"
-                "Заявку сохранила в боте. Сейчас профиль не удалось отправить в API автоматически, "
-                "но данные не потеряны: можно продолжить, а администратор увидит запись в базе бота."
-            )
         return [self._main_menu_reply(text)]
 
     def _menu_flow(
@@ -415,12 +417,6 @@ class BotEngine:
 
     def _subscription_reply(self, user: dict[str, Any]) -> BotReply:
         client_id = str(user["client_id"])
-        if client_id.startswith("local:"):
-            return BotReply(
-                "Профиль пока сохранен только в боте, поэтому подписка из API еще не подтянулась.\n\n"
-                "Можно выбрать абонемент и оставить заявку: администратор свяжет профиль вручную.",
-                main_menu_keyboard(),
-            )
         try:
             subscription = self.api.get_client_subscription(client_id)
         except ApiError as exc:
@@ -585,19 +581,19 @@ class BotEngine:
         if not selected_id:
             return BotReply("Не нашла выбранный абонемент. Откройте список тарифов еще раз.", back_to_menu_keyboard())
 
-        api_synced = True
         try:
-            if str(user.get("client_id") or "").startswith("local:"):
-                raise ApiError("Профиль пока не синхронизирован с API", status_code=None)
             response = self.api.connect_subscription(str(user["client_id"]), selected_id)
         except ApiError as exc:
-            response = {"subscription_name": selected_id}
-            api_synced = False
             self.storage.append_audit(
                 actor=f"{message.platform}:{message.user_id}",
                 action="subscription.payment_stub_api_failed",
                 subject=str(user.get("client_id") or ""),
                 details={"subscription_id": selected_id, "error": str(exc), "status_code": exc.status_code},
+            )
+            return BotReply(
+                "Не получилось сохранить заявку на абонемент в API. Попробуйте чуть позже или напишите в поддержку.\n\n"
+                "Оплата пока заглушка, но сама заявка все равно должна попасть в backend.",
+                back_to_menu_keyboard(),
             )
 
         name = (
@@ -610,15 +606,13 @@ class BotEngine:
             actor=f"{message.platform}:{message.user_id}",
             action="subscription.payment_stub_requested",
             subject=str(user.get("client_id") or ""),
-            details={"subscription_id": selected_id, "api_synced": api_synced},
+            details={"subscription_id": selected_id, "api_synced": True},
         )
         template = self.storage.get_notification_template(
             "subscription_connected",
             "✅ Заявка на абонемент «{subscription}» принята. ЮKassa скоро появится, а пока администратор свяжется с вами для оплаты.",
         )
         text = safe_format(template, subscription=name)
-        if not api_synced:
-            text += "\n\nЗаявку сохранила в боте. API сейчас не принял ее автоматически, администратор сможет обработать вручную."
         return self._main_menu_reply(text)
 
     def _promotions_reply(self) -> BotReply:
