@@ -11,6 +11,7 @@ from bot.keyboards import (
     back_to_menu_keyboard,
     consent_keyboard,
     main_menu_keyboard,
+    name_keyboard,
     phone_keyboard,
     promotions_keyboard,
     selected_subscription_keyboard,
@@ -42,17 +43,23 @@ TEXT_ACTIONS = {
     "начать": "start",
     "главное меню": "menu",
     "в главное меню": "menu",
+    "🏠 в главное меню": "menu",
     "меню": "menu",
     "моя подписка": "my_subscription",
+    "🦷 моя подписка": "my_subscription",
     "выбрать абонемент": "buy_subscription",
+    "✨ выбрать абонемент": "buy_subscription",
     "подключить абонемент": "buy_subscription",
     "купить абонемент": "buy_subscription",
     "акции": "promotions",
+    "🎁 акции": "promotions",
     "акции и скидки": "promotions",
     "помощь": "support",
+    "💬 помощь": "support",
     "поддержка": "support",
     "пропустить email": "skip_email",
     "оставить заявку на оплату": "request_subscription_payment",
+    "✅ оставить заявку на оплату": "request_subscription_payment",
 }
 
 
@@ -165,7 +172,8 @@ class BotEngine:
         if not user.get("consent_accepted_at"):
             return [
                 BotReply(
-                    "Здравствуйте! Я помогу посмотреть вашу подписку, выбрать подходящий абонемент и передать заявку администратору.\n\n"
+                    "Здравствуйте! Я помогу быстро разобраться с абонементом: посмотреть статус, выбрать тариф и оставить заявку на оплату.\n\n"
+                    "Для работы мне нужно ваше согласие на обработку персональных данных.\n\n"
                     + self._consent_text(),
                     consent_keyboard(),
                 )
@@ -173,15 +181,15 @@ class BotEngine:
         if not user.get("phone") or not user.get("client_id"):
             self.storage.update_user(user["id"], state="awaiting_phone")
             return [BotReply(self._ask_phone_text(), phone_keyboard())]
-        return [self._main_menu_reply("Рада снова видеть вас. Чем займемся?")]
+        return [self._main_menu_reply("Рада снова видеть вас 🙂 Что посмотрим?")]
 
     def _consent_text(self) -> str:
         try:
             return Path(self.consent_file).read_text(encoding="utf-8").strip()
         except FileNotFoundError:
             return (
-                "Чтобы бот мог показать подписку и сохранить заявку, нужно согласие на обработку персональных данных. "
-                "Текст согласия хранится в файле consent.txt и может быть обновлен администратором."
+                "Чтобы бот мог сохранить профиль, показать абонемент и передать заявку администратору, "
+                "нужно согласие на обработку персональных данных. Текст согласия хранится в файле consent.txt."
             )
 
     def _consent_flow(
@@ -195,7 +203,7 @@ class BotEngine:
             self.storage.accept_consent(user["id"], actor=actor)
             return [
                 BotReply(
-                    "Спасибо. Теперь привяжем профиль к номеру телефона, чтобы показывать именно ваши данные.",
+                    "✅ Спасибо! Теперь привяжем профиль к номеру телефона.",
                     phone_keyboard(),
                 ),
                 BotReply(self._ask_phone_text(), phone_keyboard()),
@@ -204,8 +212,8 @@ class BotEngine:
         if action == "decline_consent":
             return [
                 BotReply(
-                    "Понимаю. Без согласия я не смогу хранить профиль, показать подписку или передать заявку. "
-                    "Если решите продолжить, напишите /start.",
+                    "Понимаю. Без согласия я не смогу сохранить профиль и показать данные по абонементу. "
+                    "Если решите продолжить, просто напишите /start.",
                     consent_keyboard(),
                 )
             ]
@@ -214,8 +222,9 @@ class BotEngine:
 
     def _ask_phone_text(self) -> str:
         return (
-            "Введите номер телефона, который хотите использовать для входа.\n"
-            "Пример: +7 900 000-00-00"
+            "Напишите номер телефона, который хотите использовать для входа.\n\n"
+            "Пример: +7 900 000-00-00\n"
+            "VK не передает номер автоматически, поэтому его нужно отправить сообщением."
         )
 
     def _auth_flow(
@@ -227,7 +236,7 @@ class BotEngine:
         state = user.get("state") or "awaiting_phone"
 
         if state == "awaiting_name":
-            return self._handle_name(user, message)
+            return self._handle_name(user, message, action)
 
         if state == "awaiting_email":
             return self._handle_email(user, message, action)
@@ -249,21 +258,30 @@ class BotEngine:
                 temp_json="{}",
             )
             name = updated.get("full_name") or "рады видеть вас снова"
-            return [self._main_menu_reply(f"Вход выполнен, {name}. Все готово к работе.")]
+            return [self._main_menu_reply(f"✅ Вход выполнен, {name}. Все готово.")]
 
         self.storage.set_temp(user["id"], {"phone": phone})
         self.storage.update_user(user["id"], state="awaiting_name")
         return [
             BotReply(
-                f"Номер {display_phone(phone)} сохранила. Теперь напишите имя и фамилию, чтобы администратор видел вашу заявку корректно.",
-                phone_keyboard(),
+                f"✅ Номер {display_phone(phone)} сохранила.\n\n"
+                "Теперь укажите имя и фамилию. Так администратор сможет быстро найти заявку.",
+                name_keyboard(message.name),
             )
         ]
 
-    def _handle_name(self, user: dict[str, Any], message: IncomingMessage) -> list[BotReply]:
-        full_name = (message.name or message.text or "").strip()
+    def _handle_name(
+        self,
+        user: dict[str, Any],
+        message: IncomingMessage,
+        action: str | None,
+    ) -> list[BotReply]:
+        payload_name = ""
+        if message.payload and isinstance(message.payload, dict):
+            payload_name = str(message.payload.get("name") or "")
+        full_name = (payload_name if action == "use_vk_name" else message.text or message.name or "").strip()
         if len(full_name) < 2:
-            return [BotReply("Напишите, пожалуйста, имя и фамилию текстом.", phone_keyboard())]
+            return [BotReply("Напишите, пожалуйста, имя и фамилию текстом.", name_keyboard(message.name))]
 
         temp = self.storage.get_temp(user)
         temp["full_name"] = full_name
@@ -271,7 +289,8 @@ class BotEngine:
         self.storage.update_user(user["id"], state="awaiting_email")
         return [
             BotReply(
-                "Если хотите, укажите email для чека, договора или связи. Можно пропустить.",
+                "Отлично. Если удобно, укажите email для связи, чека или договора.\n\n"
+                "Можно пропустить этот шаг.",
                 skip_email_keyboard(),
             )
         ]
@@ -307,23 +326,27 @@ class BotEngine:
         }
         try:
             response = self.api.create_client(payload)
+            client_id = pick_id(response)
+            api_synced = True
         except ApiError as exc:
-            return [
-                BotReply(
-                    "Не получилось создать профиль через API. Данные не потеряны, попробуйте чуть позже или напишите в поддержку.\n\n"
-                    f"Техническая причина: {exc}",
-                    phone_keyboard(),
-                )
-            ]
+            client_id = f"local:{phone}"
+            api_synced = False
+            self.storage.append_audit(
+                actor=f"{message.platform}:{message.user_id}",
+                action="client.register_api_failed",
+                subject=client_id,
+                details={"phone": phone, "error": str(exc), "status_code": exc.status_code},
+            )
 
-        client_id = pick_id(response)
         if not client_id:
-            return [
-                BotReply(
-                    "Профиль создан, но API не вернул id клиента. Нужно, чтобы POST /clients/ возвращал id или client_id.",
-                    phone_keyboard(),
-                )
-            ]
+            client_id = f"local:{phone}"
+            api_synced = False
+            self.storage.append_audit(
+                actor=f"{message.platform}:{message.user_id}",
+                action="client.register_api_missing_id",
+                subject=client_id,
+                details={"phone": phone},
+            )
 
         updated = self.storage.update_user(
             user["id"],
@@ -336,16 +359,22 @@ class BotEngine:
         )
         self.storage.append_audit(
             actor=f"{message.platform}:{message.user_id}",
-            action="client.registered",
+            action="client.registered" if api_synced else "client.registered_local",
             subject=client_id,
-            details={"phone": phone},
+            details={"phone": phone, "api_synced": api_synced},
         )
-        template = self.storage.get_notification_template("registration_success")
-        return [
-            self._main_menu_reply(
-                safe_format(template, name=updated.get("full_name") or "готово", phone=display_phone(phone))
+        template = self.storage.get_notification_template(
+            "registration_success",
+            "✅ Готово, {name}! Теперь можно посмотреть подписку или выбрать абонемент.",
+        )
+        text = safe_format(template, name=updated.get("full_name") or "готово", phone=display_phone(phone))
+        if not api_synced:
+            text += (
+                "\n\n"
+                "Заявку сохранила в боте. Сейчас профиль не удалось отправить в API автоматически, "
+                "но данные не потеряны: можно продолжить, а администратор увидит запись в базе бота."
             )
-        ]
+        return [self._main_menu_reply(text)]
 
     def _menu_flow(
         self,
@@ -354,7 +383,7 @@ class BotEngine:
         action: str | None,
     ) -> list[BotReply]:
         if action in {None, "menu"}:
-            return [self._main_menu_reply("Выберите раздел. Я подскажу по подписке и помогу оставить заявку на абонемент.")]
+            return [self._main_menu_reply("Выберите раздел. Я рядом и подскажу по абонементу 🙂")]
         if action == "my_subscription":
             return [self._subscription_reply(user)]
         if action == "buy_subscription":
@@ -368,7 +397,7 @@ class BotEngine:
         if action == "promo_join":
             return [
                 BotReply(
-                    "Отлично. Сейчас покажу абонементы, а администратор применит условия акции при подтверждении заявки.",
+                    "✅ Отлично. Покажу абонементы, а администратор учтет условия акции при подтверждении заявки.",
                     self._subscriptions_list_reply().keyboard,
                 )
             ]
@@ -379,27 +408,39 @@ class BotEngine:
                     back_to_menu_keyboard(),
                 )
             ]
-        return [self._main_menu_reply("Не совсем поняла команду. Открою главное меню.")]
+        return [self._main_menu_reply("Не совсем поняла команду. Открываю главное меню.")]
 
     def _main_menu_reply(self, text: str) -> BotReply:
         return BotReply(text=text, keyboard=main_menu_keyboard())
 
     def _subscription_reply(self, user: dict[str, Any]) -> BotReply:
         client_id = str(user["client_id"])
+        if client_id.startswith("local:"):
+            return BotReply(
+                "Профиль пока сохранен только в боте, поэтому подписка из API еще не подтянулась.\n\n"
+                "Можно выбрать абонемент и оставить заявку: администратор свяжет профиль вручную.",
+                main_menu_keyboard(),
+            )
         try:
             subscription = self.api.get_client_subscription(client_id)
         except ApiError as exc:
+            self.storage.append_audit(
+                actor="bot",
+                action="subscription.fetch_failed",
+                subject=client_id,
+                details={"error": str(exc), "status_code": exc.status_code},
+            )
             return BotReply(
-                "Сейчас не удалось получить подписку. Обычно это временная задержка API.\n\n"
-                f"Техническая причина: {exc}",
+                "Не удалось получить подписку из API прямо сейчас. Обычно это временная задержка.\n\n"
+                "Можно попробовать еще раз чуть позже или написать в поддержку.",
                 back_to_menu_keyboard(),
             )
 
         if not subscription:
             return BotReply(
                 "У вас пока нет активной подписки.\n\n"
-                "Абонемент помогает заранее зафиксировать заботу о здоровье зубов: понятный набор услуг, срок действия и меньше неожиданных расходов. "
-                "Можно выбрать тариф и оставить заявку на оплату.",
+                "Абонемент помогает заранее зафиксировать заботу о зубах: понятный набор услуг, срок действия "
+                "и меньше неожиданных расходов. Можно выбрать тариф и оставить заявку на оплату.",
                 main_menu_keyboard(),
             )
 
@@ -424,8 +465,8 @@ class BotEngine:
         )
 
         lines = [
-            "Ваша подписка",
-            f"Статус: {status}",
+            "🦷 Ваша подписка",
+            f"✅ Статус: {status}",
             f"Тариф: {tariff}",
             f"Начало: {start_date}",
             f"Окончание: {end_date}",
@@ -436,7 +477,7 @@ class BotEngine:
             lines.append("Что еще доступно:")
             lines.extend(service_lines)
         lines.append("")
-        lines.append("Если хотите продлить или перейти на другой тариф, откройте «Выбрать абонемент».")
+        lines.append("Хотите продлить или перейти на другой тариф? Откройте «Выбрать абонемент».")
         return "\n".join(lines)
 
     def _format_services(self, services: Any) -> list[str]:
@@ -446,24 +487,34 @@ class BotEngine:
         for item in services:
             if not isinstance(item, dict):
                 continue
-            name = item.get("name") or item.get("title") or item.get("service_name") or "Услуга"
-            left = first_present(item, "left", "remaining", "available")
+            name = (
+                item.get("name")
+                or item.get("title")
+                or item.get("service_name")
+                or item.get("service_description")
+                or "Услуга"
+            )
+            left = first_present(item, "left", "remaining", "available", "available_quantity", "quantity")
             total = first_present(item, "total", "quantity", "limit")
             if left is not None and total is not None:
-                result.append(f"- {name}: осталось {left} из {total}")
+                result.append(f"• {name}: осталось {left} из {total}")
             elif left is not None:
-                result.append(f"- {name}: осталось {left}")
+                result.append(f"• {name}: осталось {left}")
             else:
-                result.append(f"- {name}")
+                result.append(f"• {name}")
         return result
 
     def _subscriptions_list_reply(self) -> BotReply:
         try:
             subscriptions = self.api.list_subscriptions()
         except ApiError as exc:
+            self.storage.append_audit(
+                actor="bot",
+                action="subscriptions.fetch_failed",
+                details={"error": str(exc), "status_code": exc.status_code},
+            )
             return BotReply(
-                "Не удалось получить список абонементов. Попробуйте чуть позже или напишите в поддержку.\n\n"
-                f"Техническая причина: {exc}",
+                "Не удалось получить список абонементов из API. Попробуйте чуть позже или напишите в поддержку.",
                 back_to_menu_keyboard(),
             )
 
@@ -474,8 +525,8 @@ class BotEngine:
             )
 
         lines = [
-            "Выберите абонемент",
-            "Абонемент удобен, если вы хотите заранее понимать, какие услуги включены и на какой срок они доступны.",
+            "✨ Выберите абонемент",
+            "Абонемент удобен, если хочется заранее понимать, какие услуги включены и на какой срок они доступны.",
             "",
         ]
         for index, subscription in enumerate(subscriptions[:10], start=1):
@@ -489,7 +540,10 @@ class BotEngine:
             if description:
                 lines.append(str(description))
         lines.append("")
-        lines.append("Онлайн-оплата пока готовится. Сейчас можно оставить заявку, и администратор подтвердит оплату вручную.")
+        lines.append(
+            "Онлайн-оплата через ЮKassa пока готовится. Сейчас можно оставить заявку, "
+            "и администратор подтвердит оплату вручную."
+        )
         return BotReply("\n".join(lines), subscriptions_keyboard(subscriptions))
 
     def _select_subscription_reply(self, message: IncomingMessage) -> BotReply:
@@ -512,9 +566,7 @@ class BotEngine:
             price_value = ""
             description = ""
 
-        lines = [
-            f"Вы выбрали: {name}",
-        ]
+        lines = [f"Вы выбрали: {name}"]
         if price_value:
             lines.append(f"Стоимость: {price_value}")
         if description:
@@ -522,8 +574,8 @@ class BotEngine:
         lines.extend(
             [
                 "",
-                "Оплата через ЮKassa пока не подключена. Нажмите «Оставить заявку на оплату», и мы создадим заявку. "
-                "Администратор проверит данные, подскажет удобный способ оплаты и активирует абонемент.",
+                "✅ Нажмите «Оставить заявку на оплату». Я передам выбор в систему, "
+                "а администратор свяжется с вами и подскажет удобный способ оплаты.",
             ]
         )
         return BotReply("\n".join(lines), selected_subscription_keyboard(selected_id))
@@ -533,13 +585,19 @@ class BotEngine:
         if not selected_id:
             return BotReply("Не нашла выбранный абонемент. Откройте список тарифов еще раз.", back_to_menu_keyboard())
 
+        api_synced = True
         try:
+            if str(user.get("client_id") or "").startswith("local:"):
+                raise ApiError("Профиль пока не синхронизирован с API", status_code=None)
             response = self.api.connect_subscription(str(user["client_id"]), selected_id)
         except ApiError as exc:
-            return BotReply(
-                "Заявку не получилось передать в API. Попробуйте чуть позже или напишите в поддержку.\n\n"
-                f"Техническая причина: {exc}",
-                back_to_menu_keyboard(),
+            response = {"subscription_name": selected_id}
+            api_synced = False
+            self.storage.append_audit(
+                actor=f"{message.platform}:{message.user_id}",
+                action="subscription.payment_stub_api_failed",
+                subject=str(user.get("client_id") or ""),
+                details={"subscription_id": selected_id, "error": str(exc), "status_code": exc.status_code},
             )
 
         name = (
@@ -552,10 +610,15 @@ class BotEngine:
             actor=f"{message.platform}:{message.user_id}",
             action="subscription.payment_stub_requested",
             subject=str(user.get("client_id") or ""),
-            details={"subscription_id": selected_id},
+            details={"subscription_id": selected_id, "api_synced": api_synced},
         )
-        template = self.storage.get_notification_template("subscription_connected")
+        template = self.storage.get_notification_template(
+            "subscription_connected",
+            "✅ Заявка на абонемент «{subscription}» принята. ЮKassa скоро появится, а пока администратор свяжется с вами для оплаты.",
+        )
         text = safe_format(template, subscription=name)
+        if not api_synced:
+            text += "\n\nЗаявку сохранила в боте. API сейчас не принял ее автоматически, администратор сможет обработать вручную."
         return self._main_menu_reply(text)
 
     def _promotions_reply(self) -> BotReply:
@@ -565,7 +628,7 @@ class BotEngine:
                 self.storage.get_setting("empty_promotions_text"),
                 back_to_menu_keyboard(),
             )
-        lines = ["Актуальные предложения"]
+        lines = ["🎁 Актуальные предложения"]
         for promotion in promotions:
             lines.append("")
             lines.append(str(promotion["title"]))

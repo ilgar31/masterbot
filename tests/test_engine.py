@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from bot.api_client import ApiError
 from bot.handlers import BotEngine, IncomingMessage, normalize_phone
 from bot.storage import Storage
 
@@ -42,6 +43,11 @@ class FakeApi:
         return {"subscription_name": "Премиум"}
 
 
+class FailingCreateApi(FakeApi):
+    def create_client(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raise ApiError('API вернуло 404: {"detail":"Not Found"}', status_code=404)
+
+
 class EngineTest(unittest.TestCase):
     def setUp(self) -> None:
         self.test_dir = Path.cwd() / "test_data"
@@ -65,6 +71,21 @@ class EngineTest(unittest.TestCase):
         except OSError:
             pass
 
+    def register_user(self, engine: BotEngine | None = None) -> None:
+        target = engine or self.engine
+        target.handle(IncomingMessage("vk", "42", "/start"))
+        target.handle(IncomingMessage("vk", "42", payload={"action": "accept_consent"}))
+        target.handle(IncomingMessage("vk", "42", "+7 900 000-00-00", name="Иван Иванов"))
+        target.handle(
+            IncomingMessage(
+                "vk",
+                "42",
+                payload={"action": "use_vk_name", "name": "Иван Иванов"},
+                name="Иван Иванов",
+            )
+        )
+        target.handle(IncomingMessage("vk", "42", payload={"action": "skip_email"}))
+
     def test_normalize_phone(self) -> None:
         self.assertEqual(normalize_phone("+7 900 000-00-00"), "79000000000")
         self.assertEqual(normalize_phone("8 (900) 000-00-00"), "79000000000")
@@ -77,12 +98,19 @@ class EngineTest(unittest.TestCase):
         accepted = self.engine.handle(
             IncomingMessage("vk", "42", payload={"action": "accept_consent"})
         )
-        self.assertIn("Введите номер", accepted[-1].text)
+        self.assertIn("номер телефона", accepted[-1].text)
 
-        phone = self.engine.handle(IncomingMessage("vk", "42", "+7 900 000-00-00"))
-        self.assertIn("имя", phone[0].text.lower())
+        phone = self.engine.handle(IncomingMessage("vk", "42", "+7 900 000-00-00", name="Иван Иванов"))
+        self.assertIn("Иван Иванов", phone[0].keyboard.rows[0][0].label)
 
-        name = self.engine.handle(IncomingMessage("vk", "42", "Иван Иванов"))
+        name = self.engine.handle(
+            IncomingMessage(
+                "vk",
+                "42",
+                payload={"action": "use_vk_name", "name": "Иван Иванов"},
+                name="Иван Иванов",
+            )
+        )
         self.assertIn("email", name[0].text.lower())
 
         done = self.engine.handle(
@@ -103,8 +131,8 @@ class EngineTest(unittest.TestCase):
                 payload={"action": "select_subscription", "subscription_id": "sub-1"},
             )
         )
-        self.assertIn("Оставить заявку", choose[0].text)
-        self.assertIn("ЮKassa", choose[0].text)
+        self.assertIn("Оставить заявку", choose[0].keyboard.rows[0][0].label)
+        self.assertIn("Стоимость", choose[0].text)
 
         connected = self.engine.handle(
             IncomingMessage(
@@ -116,6 +144,15 @@ class EngineTest(unittest.TestCase):
         self.assertIn("Премиум", connected[0].text)
         self.assertIn("ЮKassa", connected[0].text)
         self.assertEqual(self.api.connected, [("client-1", "sub-1")])
+
+    def test_registration_falls_back_when_create_client_404(self) -> None:
+        engine = BotEngine(self.storage, FailingCreateApi(), str(self.test_dir / "consent_test.txt"))  # type: ignore[arg-type]
+        self.register_user(engine)
+        user = self.storage.get_or_create_user("vk", "42")
+        self.assertEqual(user["client_id"], "local:79000000000")
+
+        menu = engine.handle(IncomingMessage("vk", "42", payload={"action": "my_subscription"}))
+        self.assertIn("сохранен только в боте", menu[0].text)
 
 
 if __name__ == "__main__":

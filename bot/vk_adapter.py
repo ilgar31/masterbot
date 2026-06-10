@@ -18,6 +18,7 @@ class VkMessenger:
         self.token = token
         self.api_version = api_version
         self.session = requests.Session()
+        self._name_cache: dict[int, str] = {}
 
     def send_message(self, peer_id: int, text: str, keyboard: str | None = None) -> None:
         payload: dict[str, Any] = {
@@ -44,13 +45,43 @@ class VkMessenger:
                 return
             raise RuntimeError(f"VK API error: {data['error']}")
 
+    def get_user_name(self, user_id: int) -> str | None:
+        if user_id in self._name_cache:
+            return self._name_cache[user_id]
+        try:
+            data = _vk_api_call(
+                self.session,
+                "users.get",
+                {
+                    "access_token": self.token,
+                    "v": self.api_version,
+                    "user_ids": str(user_id),
+                },
+            )
+        except Exception:
+            return None
+        if not isinstance(data, list) or not data:
+            return None
+        profile = data[0]
+        if not isinstance(profile, dict):
+            return None
+        full_name = " ".join(
+            part.strip()
+            for part in (str(profile.get("first_name") or ""), str(profile.get("last_name") or ""))
+            if part.strip()
+        )
+        if not full_name:
+            return None
+        self._name_cache[user_id] = full_name
+        return full_name
+
 
 def _vk_api_call(
     session: requests.Session,
     method: str,
     payload: dict[str, Any],
     timeout: float = 10,
-) -> dict[str, Any]:
+) -> Any:
     response = session.post(
         f"https://api.vk.com/method/{method}",
         data=payload,
@@ -61,7 +92,7 @@ def _vk_api_call(
     if "error" in data:
         raise RuntimeError(f"VK API error: {data['error']}")
     result = data.get("response")
-    if not isinstance(result, dict):
+    if not isinstance(result, (dict, list)):
         raise RuntimeError(f"VK API returned unexpected response for {method}: {data}")
     return result
 
@@ -108,6 +139,7 @@ def handle_vk_message_event(
         text=str(message.get("text") or ""),
         payload=_parse_payload(message.get("payload")),
         phone=_extract_phone(message),
+        name=messenger.get_user_name(int(user_id)),
     )
     replies = engine.handle(incoming)
     for reply in replies:

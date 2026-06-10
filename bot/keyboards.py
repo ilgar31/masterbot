@@ -28,8 +28,8 @@ def consent_keyboard() -> Keyboard:
     return Keyboard(
         rows=[
             [
-                _button("Принимаю", "accept_consent", "positive"),
-                _button("Не принимаю", "decline_consent", "negative"),
+                _button("✅ Принимаю", "accept_consent", "positive"),
+                _button("Не сейчас", "decline_consent", "negative"),
             ]
         ],
         one_time=True,
@@ -37,25 +37,39 @@ def consent_keyboard() -> Keyboard:
 
 
 def phone_keyboard() -> Keyboard:
-    return Keyboard(rows=[[_button("В главное меню", "menu")]])
+    return Keyboard(rows=[[_button("🏠 В главное меню", "menu")]])
+
+
+def name_keyboard(vk_name: str | None = None) -> Keyboard:
+    rows: list[list[Button]] = []
+    if vk_name:
+        rows.append([_button(f"✅ {vk_name}"[:40], "use_vk_name", "positive", name=vk_name)])
+    rows.append([_button("🏠 В главное меню", "menu")])
+    return Keyboard(rows=rows, one_time=True)
 
 
 def skip_email_keyboard() -> Keyboard:
-    return Keyboard(rows=[[_button("Пропустить email", "skip_email")]], one_time=True)
+    return Keyboard(
+        rows=[
+            [_button("Пропустить email", "skip_email")],
+            [_button("🏠 В главное меню", "menu")],
+        ],
+        one_time=True,
+    )
 
 
 def main_menu_keyboard() -> Keyboard:
     return Keyboard(
         rows=[
-            [_button("Моя подписка", "my_subscription", "primary")],
-            [_button("Выбрать абонемент", "buy_subscription", "positive")],
-            [_button("Акции", "promotions"), _button("Помощь", "support")],
+            [_button("🦷 Моя подписка", "my_subscription", "primary")],
+            [_button("✨ Выбрать абонемент", "buy_subscription", "positive")],
+            [_button("🎁 Акции", "promotions"), _button("💬 Помощь", "support")],
         ]
     )
 
 
 def back_to_menu_keyboard() -> Keyboard:
-    return Keyboard(rows=[[_button("В главное меню", "menu", "primary")]])
+    return Keyboard(rows=[[_button("🏠 В главное меню", "menu", "primary")]])
 
 
 def subscriptions_keyboard(subscriptions: list[dict[str, Any]]) -> Keyboard:
@@ -71,8 +85,8 @@ def subscriptions_keyboard(subscriptions: list[dict[str, Any]]) -> Keyboard:
         if not subscription_id:
             continue
         label = str(subscription.get("name") or subscription.get("title") or "Абонемент")
-        rows.append([_button(label[:40], "select_subscription", "primary", subscription_id=subscription_id)])
-    rows.append([_button("В главное меню", "menu")])
+        rows.append([_button(f"✨ {label}"[:40], "select_subscription", "primary", subscription_id=subscription_id)])
+    rows.append([_button("🏠 В главное меню", "menu")])
     return Keyboard(rows=rows)
 
 
@@ -81,13 +95,13 @@ def selected_subscription_keyboard(subscription_id: str) -> Keyboard:
         rows=[
             [
                 _button(
-                    "Оставить заявку на оплату",
+                    "✅ Оставить заявку на оплату",
                     "request_subscription_payment",
                     "positive",
                     subscription_id=subscription_id,
                 )
             ],
-            [_button("Выбрать другой", "buy_subscription"), _button("В главное меню", "menu")],
+            [_button("Выбрать другой", "buy_subscription"), _button("🏠 В главное меню", "menu")],
         ],
         one_time=True,
     )
@@ -99,14 +113,14 @@ def promotions_keyboard(promotions: list[dict[str, Any]]) -> Keyboard:
         rows.append(
             [
                 _button(
-                    "Хочу воспользоваться",
+                    "✅ Хочу воспользоваться",
                     "promo_join",
                     "positive",
                     promotion_id=promotion["id"],
                 )
             ]
         )
-    rows.append([_button("В главное меню", "menu")])
+    rows.append([_button("🏠 В главное меню", "menu")])
     return Keyboard(rows=rows)
 
 
