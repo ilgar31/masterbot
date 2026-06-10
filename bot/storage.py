@@ -148,11 +148,11 @@ class Storage:
         templates = {
             "registration_success": (
                 "Регистрация завершена",
-                "Готово, {name}! Теперь можно посмотреть подписку, выбрать абонемент или оставить заявку на оплату.",
+                "Готово, {name}! Теперь можно посмотреть подписку, выбрать абонемент и перейти к оплате.",
             ),
             "subscription_connected": (
                 "Заявка на оплату абонемента",
-                "Заявка на абонемент «{subscription}» принята. Онлайн-оплата через ЮKassa скоро появится, а пока администратор свяжется с вами и подскажет удобный способ оплаты.",
+                "✅ Оплата успешно прошла.\n\nАбонемент «{subscription}» активирован. Теперь он доступен в разделе «Моя подписка».",
             ),
             "redemption_requested": (
                 "Заявка на списание бонусов",
@@ -171,9 +171,11 @@ class Storage:
         legacy_templates = {
             "registration_success": "Готово, {name}! Теперь можно смотреть подписку и подключать абонементы.",
             "subscription_connected": "Заявка на подключение абонемента «{subscription}» отправлена. Если потребуется уточнение, администратор свяжется с вами.",
+            "subscription_connected_v2": "✅ Оплата успешно прошла.\n\nАбонемент «{subscription}» активирован. Теперь он доступен в разделе «Моя подписка».",
             "redemption_requested": "Заявка на списание бонусов по позиции «{item}» отправлена администратору.",
         }
-        for key, old_text in legacy_templates.items():
+        for legacy_key, old_text in legacy_templates.items():
+            key = "subscription_connected" if legacy_key == "subscription_connected_v2" else legacy_key
             label, text = templates[key]
             conn.execute(
                 """

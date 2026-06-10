@@ -201,6 +201,45 @@ class ClinicApiClient:
         data = self._request("GET", "/subscriptions/")
         return self._as_list(data, "subscriptions")
 
+    def list_services(self) -> list[dict[str, Any]]:
+        data = self._request("GET", "/services/")
+        return self._as_list(data, "services")
+
+    def list_subscription_services(self) -> list[dict[str, Any]]:
+        data = self._request("GET", "/subscription/services/")
+        return self._as_list(data, "subscription_services")
+
+    def list_subscriptions_with_services(self) -> list[dict[str, Any]]:
+        subscriptions = self.list_subscriptions()
+        services_by_id = {
+            str(item.get("id")): item
+            for item in self.list_services()
+            if item.get("id") is not None
+        }
+        links = self.list_subscription_services()
+
+        result = []
+        for subscription in subscriptions:
+            current = dict(subscription)
+            current_id = str(subscription_id_value(current))
+            included_services = []
+            for link in links:
+                if str(link.get("subscription_id")) != current_id:
+                    continue
+                service = services_by_id.get(str(link.get("service_id"))) or {}
+                included_services.append(
+                    {
+                        "name": service.get("description")
+                        or service.get("name")
+                        or service.get("title")
+                        or f"Услуга #{link.get('service_id')}",
+                        "quantity": link.get("quantity"),
+                    }
+                )
+            current["included_services"] = included_services
+            result.append(current)
+        return result
+
     def get_client_subscription(self, client_id: str) -> dict[str, Any] | None:
         data = self._request("GET", f"/clients/subscription/{client_id}/", allow_404=True)
         if isinstance(data, list):
@@ -242,3 +281,13 @@ class ClinicApiClient:
     def get_price(self, price_id: str) -> dict[str, Any] | None:
         data = self._request("GET", f"/prices/{price_id}", allow_404=True)
         return data if isinstance(data, dict) else None
+
+
+def subscription_id_value(subscription: dict[str, Any]) -> str:
+    return str(
+        subscription.get("id")
+        or subscription.get("subscription_id")
+        or subscription.get("uuid")
+        or subscription.get("code")
+        or ""
+    )

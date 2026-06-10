@@ -38,6 +38,26 @@ class FakeApi:
             }
         ]
 
+    def list_services(self) -> list[dict[str, Any]]:
+        return [
+            {"id": "srv-1", "description": "Проф. гигиена", "price": 3000},
+            {"id": "srv-2", "description": "Лечение кариеса", "price": 4000},
+        ]
+
+    def list_subscription_services(self) -> list[dict[str, Any]]:
+        return [
+            {"subscription_id": "sub-1", "service_id": "srv-1", "quantity": 2},
+            {"subscription_id": "sub-1", "service_id": "srv-2", "quantity": 1},
+        ]
+
+    def list_subscriptions_with_services(self) -> list[dict[str, Any]]:
+        subscription = dict(self.list_subscriptions()[0])
+        subscription["included_services"] = [
+            {"name": "Проф. гигиена", "quantity": 2},
+            {"name": "Лечение кариеса", "quantity": 1},
+        ]
+        return [subscription]
+
     def get_client_subscription(self, client_id: str) -> dict[str, Any]:
         return {
             "status": "Активна",
@@ -139,14 +159,21 @@ class EngineTest(unittest.TestCase):
         self.assertIn("Проф. гигиена", subscription[0].text)
 
         choose = self.engine.handle(
+            IncomingMessage("vk", "42", payload={"action": "buy_subscription"})
+        )
+        self.assertIn("Состав подписок", choose[0].text)
+        self.assertIn("Проф. гигиена", choose[0].text)
+        self.assertNotIn("ЮKassa", choose[0].text)
+
+        selected = self.engine.handle(
             IncomingMessage(
                 "vk",
                 "42",
                 payload={"action": "select_subscription", "subscription_id": "sub-1"},
             )
         )
-        self.assertIn("Оставить заявку", choose[0].keyboard.rows[0][0].label)
-        self.assertIn("Стоимость", choose[0].text)
+        self.assertIn("Перейти к оплате", selected[0].keyboard.rows[0][0].label)
+        self.assertIn("Необходимо", selected[0].text)
 
         connected = self.engine.handle(
             IncomingMessage(
@@ -156,7 +183,7 @@ class EngineTest(unittest.TestCase):
             )
         )
         self.assertIn("Премиум", connected[0].text)
-        self.assertIn("ЮKassa", connected[0].text)
+        self.assertIn("Оплата успешно прошла", connected[0].text)
         self.assertEqual(self.api.connected, [("client-1", "sub-1")])
 
     def test_registration_stops_when_create_client_404(self) -> None:

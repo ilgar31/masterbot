@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,8 @@ TEXT_ACTIONS = {
     "пропустить email": "skip_email",
     "оставить заявку на оплату": "request_subscription_payment",
     "✅ оставить заявку на оплату": "request_subscription_payment",
+    "перейти к оплате": "request_subscription_payment",
+    "💳 перейти к оплате": "request_subscription_payment",
 }
 
 
@@ -138,6 +141,21 @@ def subscription_name(subscription: dict[str, Any]) -> str:
         or subscription.get("subscription_name")
         or "Абонемент"
     )
+
+
+def subscription_is_active(subscription: dict[str, Any] | None) -> bool:
+    if not subscription:
+        return False
+    raw_status = str(subscription.get("status") or subscription.get("state") or "").casefold()
+    if raw_status in {"inactive", "expired", "disabled", "cancelled", "canceled", "не активна", "истекла"}:
+        return False
+    end_date = subscription.get("end_date") or subscription.get("date_end")
+    if not end_date:
+        return True
+    try:
+        return date.fromisoformat(str(end_date)[:10]) >= date.today()
+    except ValueError:
+        return True
 
 
 class BotEngine:
@@ -444,16 +462,17 @@ class BotEngine:
 
         if not subscription:
             return BotReply(
-                "У вас пока нет активной подписки.\n\n"
-                "Абонемент помогает заранее зафиксировать заботу о зубах: понятный набор услуг, срок действия "
-                "и меньше неожиданных расходов. Можно выбрать тариф и оставить заявку на оплату.",
+                "🦷 Ваша подписка\n"
+                "Статус: Не активна\n\n"
+                "Пока у вас нет активного абонемента. Выберите подходящий тариф: так проще заранее понимать, "
+                "какие услуги уже включены и сколько визитов доступно.",
                 main_menu_keyboard(),
             )
 
         return BotReply(self._format_subscription(subscription), back_to_menu_keyboard())
 
     def _format_subscription(self, subscription: dict[str, Any]) -> str:
-        status = subscription.get("status") or subscription.get("state") or "не указан"
+        status = "Активна" if subscription_is_active(subscription) else "Не активна"
         tariff = (
             subscription.get("tariff")
             or subscription.get("name")
@@ -472,7 +491,7 @@ class BotEngine:
 
         lines = [
             "🦷 Ваша подписка",
-            f"✅ Статус: {status}",
+            f"Статус: {status}",
             f"Тариф: {tariff}",
             f"Начало: {start_date}",
             f"Окончание: {end_date}",
@@ -512,7 +531,7 @@ class BotEngine:
 
     def _subscriptions_list_reply(self) -> BotReply:
         try:
-            subscriptions = self.api.list_subscriptions()
+            subscriptions = self.api.list_subscriptions_with_services()
         except ApiError as exc:
             self.storage.append_audit(
                 actor="bot",
@@ -531,8 +550,8 @@ class BotEngine:
             )
 
         lines = [
-            "✨ Выберите абонемент",
-            "Абонемент удобен, если хочется заранее понимать, какие услуги включены и на какой срок они доступны.",
+            "✨ Состав подписок",
+            "Выберите тариф, который подходит под ваш план лечения и профилактики.",
             "",
         ]
         for index, subscription in enumerate(subscriptions[:10], start=1):
@@ -541,15 +560,22 @@ class BotEngine:
             description = subscription.get("description") or subscription.get("body") or ""
             line = f"{index}. {name}"
             if price_value:
-                line += f" - {price_value}"
+                line += f" — {price_value}"
             lines.append(line)
             if description:
                 lines.append(str(description))
-        lines.append("")
-        lines.append(
-            "Онлайн-оплата через ЮKassa пока готовится. Сейчас можно оставить заявку, "
-            "и администратор подтвердит оплату вручную."
-        )
+            included_services = subscription.get("included_services") or []
+            if included_services:
+                for service in included_services:
+                    if not isinstance(service, dict):
+                        continue
+                    service_name = service.get("name") or "Услуга"
+                    quantity = service.get("quantity")
+                    quantity_text = f" — {quantity} шт." if quantity not in (None, "") else ""
+                    lines.append(f"   • {service_name}{quantity_text}")
+            else:
+                lines.append("   • Состав тарифа уточняется")
+            lines.append("")
         return BotReply("\n".join(lines), subscriptions_keyboard(subscriptions))
 
     def _select_subscription_reply(self, message: IncomingMessage) -> BotReply:
@@ -580,8 +606,8 @@ class BotEngine:
         lines.extend(
             [
                 "",
-                "✅ Нажмите «Оставить заявку на оплату». Я передам выбор в систему, "
-                "а администратор свяжется с вами и подскажет удобный способ оплаты.",
+                "Необходимо оплатить выбранный тариф, чтобы закрепить абонемент за вами. "
+                "После оплаты он сразу появится в разделе «Моя подписка», а включенные услуги будут видны с остатками.",
             ]
         )
         return BotReply("\n".join(lines), selected_subscription_keyboard(selected_id))
@@ -591,6 +617,7 @@ class BotEngine:
         if not selected_id:
             return BotReply("Не нашла выбранный абонемент. Откройте список тарифов еще раз.", back_to_menu_keyboard())
 
+        subscription_title = self._subscription_title_by_id(selected_id)
         try:
             response = self.api.connect_subscription(str(user["client_id"]), selected_id)
         except ApiError as exc:
@@ -610,6 +637,7 @@ class BotEngine:
             response.get("name")
             or response.get("title")
             or response.get("subscription_name")
+            or subscription_title
             or selected_id
         )
         self.storage.append_audit(
@@ -620,10 +648,18 @@ class BotEngine:
         )
         template = self.storage.get_notification_template(
             "subscription_connected",
-            "✅ Заявка на абонемент «{subscription}» принята. ЮKassa скоро появится, а пока администратор свяжется с вами для оплаты.",
+            "✅ Оплата успешно прошла.\n\nАбонемент «{subscription}» активирован. Теперь он доступен в разделе «Моя подписка».",
         )
         text = safe_format(template, subscription=name)
         return self._main_menu_reply(text)
+
+    def _subscription_title_by_id(self, selected_id: str) -> str | None:
+        try:
+            subscriptions = self.api.list_subscriptions()
+        except ApiError:
+            return None
+        selected = next((item for item in subscriptions if subscription_id(item) == selected_id), None)
+        return subscription_name(selected) if selected else None
 
     def _promotions_reply(self) -> BotReply:
         promotions = self.storage.list_promotions(active_only=True)

@@ -95,7 +95,7 @@ def selected_subscription_keyboard(subscription_id: str) -> Keyboard:
         rows=[
             [
                 _button(
-                    "✅ Оставить заявку на оплату",
+                    "💳 Перейти к оплате",
                     "request_subscription_payment",
                     "positive",
                     subscription_id=subscription_id,
