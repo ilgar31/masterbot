@@ -114,11 +114,10 @@ class Storage:
         now = utc_now()
         settings = {
             "referral_rules": (
-                "Расскажите знакомым о клинике. Правила, размер бонусов и условия "
-                "активации администратор может изменить в этой админке."
+                "Расскажите знакомым о клинике. Актуальные условия рекомендаций администратор может обновить в админке."
             ),
-            "support_contacts": "Поддержка: +7 000 000-00-00\nАдрес и график работы можно изменить в админке.",
-            "empty_promotions_text": "Сейчас активных акций нет. Мы сообщим, когда появится что-то новое.",
+            "support_contacts": "Поддержка: +7 000 000-00-00\nАдрес, график работы и контакты можно изменить в админке.",
+            "empty_promotions_text": "Сейчас активных акций нет. Загляните позже: здесь появятся предложения для подписчиков.",
         }
         for key, value in settings.items():
             conn.execute(
@@ -129,18 +128,33 @@ class Storage:
                 (key, value, now),
             )
 
+        legacy_settings = {
+            "referral_rules": "Расскажите знакомым о клинике. Правила, размер бонусов и условия активации администратор может изменить в этой админке.",
+            "support_contacts": "Поддержка: +7 000 000-00-00\nАдрес и график работы можно изменить в админке.",
+            "empty_promotions_text": "Сейчас активных акций нет. Мы сообщим, когда появится что-то новое.",
+        }
+        for key, old_value in legacy_settings.items():
+            conn.execute(
+                """
+                UPDATE content_settings
+                SET value = ?, updated_at = ?
+                WHERE key = ? AND value = ?
+                """,
+                (settings[key], now, key, old_value),
+            )
+
         templates = {
             "registration_success": (
                 "Регистрация завершена",
-                "Готово, {name}! Теперь можно смотреть подписку и подключать абонементы.",
+                "Готово, {name}! Теперь можно посмотреть подписку, выбрать абонемент или оставить заявку на оплату.",
             ),
             "subscription_connected": (
-                "Абонемент подключен",
-                "Заявка на подключение абонемента «{subscription}» отправлена. Если потребуется уточнение, администратор свяжется с вами.",
+                "Заявка на оплату абонемента",
+                "Заявка на абонемент «{subscription}» принята. Онлайн-оплата через ЮKassa скоро появится, а пока администратор свяжется с вами и подскажет удобный способ оплаты.",
             ),
             "redemption_requested": (
                 "Заявка на списание бонусов",
-                "Заявка на списание бонусов по позиции «{item}» отправлена администратору.",
+                "Заявка по позиции «{item}» отправлена администратору.",
             ),
         }
         for key, (label, text) in templates.items():
@@ -150,6 +164,22 @@ class Storage:
                 VALUES (?, ?, ?, ?)
                 """,
                 (key, label, text, now),
+            )
+
+        legacy_templates = {
+            "registration_success": "Готово, {name}! Теперь можно смотреть подписку и подключать абонементы.",
+            "subscription_connected": "Заявка на подключение абонемента «{subscription}» отправлена. Если потребуется уточнение, администратор свяжется с вами.",
+            "redemption_requested": "Заявка на списание бонусов по позиции «{item}» отправлена администратору.",
+        }
+        for key, old_text in legacy_templates.items():
+            label, text = templates[key]
+            conn.execute(
+                """
+                UPDATE notification_templates
+                SET label = ?, text = ?, updated_at = ?
+                WHERE key = ? AND text = ?
+                """,
+                (label, text, now, key, old_text),
             )
 
     @staticmethod
@@ -422,4 +452,3 @@ class Storage:
                 """,
                 (actor, action, subject, details_value, utc_now()),
             )
-

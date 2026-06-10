@@ -19,7 +19,14 @@ class FakeApi:
         return {"id": client_id}
 
     def list_subscriptions(self) -> list[dict[str, Any]]:
-        return [{"id": "sub-1", "name": "Премиум", "price": 5000}]
+        return [
+            {
+                "id": "sub-1",
+                "name": "Премиум",
+                "price": 5000,
+                "description": "Для тех, кто хочет закрыть базовую профилактику заранее.",
+            }
+        ]
 
     def get_client_subscription(self, client_id: str) -> dict[str, Any]:
         return {
@@ -63,14 +70,14 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(normalize_phone("8 (900) 000-00-00"), "79000000000")
         self.assertIsNone(normalize_phone("123"))
 
-    def test_registration_and_subscription_flow(self) -> None:
+    def test_registration_and_payment_stub_flow(self) -> None:
         first = self.engine.handle(IncomingMessage("vk", "42", "/start"))
         self.assertIn("Текст согласия", first[0].text)
 
         accepted = self.engine.handle(
             IncomingMessage("vk", "42", payload={"action": "accept_consent"})
         )
-        self.assertIn("Введите номер", accepted[0].text)
+        self.assertIn("Введите номер", accepted[-1].text)
 
         phone = self.engine.handle(IncomingMessage("vk", "42", "+7 900 000-00-00"))
         self.assertIn("имя", phone[0].text.lower())
@@ -96,16 +103,18 @@ class EngineTest(unittest.TestCase):
                 payload={"action": "select_subscription", "subscription_id": "sub-1"},
             )
         )
-        self.assertIn("Подтвердите", choose[0].text)
+        self.assertIn("Оставить заявку", choose[0].text)
+        self.assertIn("ЮKassa", choose[0].text)
 
         connected = self.engine.handle(
             IncomingMessage(
                 "vk",
                 "42",
-                payload={"action": "confirm_subscription", "subscription_id": "sub-1"},
+                payload={"action": "request_subscription_payment", "subscription_id": "sub-1"},
             )
         )
         self.assertIn("Премиум", connected[0].text)
+        self.assertIn("ЮKassa", connected[0].text)
         self.assertEqual(self.api.connected, [("client-1", "sub-1")])
 
 
