@@ -24,7 +24,12 @@ def build_engine(settings: Settings) -> BotEngine:
         api_key_header=settings.api_key_header,
         timeout=settings.api_timeout,
     )
-    return BotEngine(storage=storage, api=api, consent_file=settings.consent_file)
+    return BotEngine(
+        storage=storage,
+        api=api,
+        consent_file=settings.consent_file,
+        consent_pdf_file=settings.consent_pdf_file,
+    )
 
 
 def run_cli(engine: BotEngine) -> None:
@@ -37,6 +42,8 @@ def run_cli(engine: BotEngine) -> None:
         replies = engine.handle(IncomingMessage(platform="cli", user_id="local", text=text))
         for reply in replies:
             print(reply.text)
+            if reply.attachment_path:
+                print(f"Файл: {reply.attachment_path}")
             options = render_cli_options(reply.keyboard)
             if options:
                 print(options)

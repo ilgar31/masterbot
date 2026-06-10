@@ -9,6 +9,9 @@ from bot.handlers import BotEngine, IncomingMessage, normalize_phone
 from bot.storage import Storage
 
 
+CONSENT_PDF = "Пользовательское соглашение.pdf"
+
+
 class FakeApi:
     def __init__(self) -> None:
         self.clients: dict[str, dict[str, Any]] = {}
@@ -69,7 +72,7 @@ class EngineTest(unittest.TestCase):
         self.storage = Storage(str(db_path))
         self.storage.initialize()
         self.api = FakeApi()
-        self.engine = BotEngine(self.storage, self.api, str(consent_path))  # type: ignore[arg-type]
+        self.engine = BotEngine(self.storage, self.api, str(consent_path), CONSENT_PDF)  # type: ignore[arg-type]
 
     def tearDown(self) -> None:
         for path in self.test_dir.glob("bot_test.sqlite3*"):
@@ -102,7 +105,9 @@ class EngineTest(unittest.TestCase):
 
     def test_registration_and_payment_stub_flow(self) -> None:
         first = self.engine.handle(IncomingMessage("vk", "42", "/start"))
-        self.assertIn("Текст согласия", first[0].text)
+        self.assertIn("Master", first[0].text)
+        self.assertIn("Принимаю", first[0].text)
+        self.assertEqual(first[0].attachment_path, CONSENT_PDF)
 
         accepted = self.engine.handle(
             IncomingMessage("vk", "42", payload={"action": "accept_consent"})
@@ -155,7 +160,12 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(self.api.connected, [("client-1", "sub-1")])
 
     def test_registration_stops_when_create_client_404(self) -> None:
-        engine = BotEngine(self.storage, FailingCreateApi(), str(self.test_dir / "consent_test.txt"))  # type: ignore[arg-type]
+        engine = BotEngine(
+            self.storage,
+            FailingCreateApi(),
+            str(self.test_dir / "consent_test.txt"),
+            CONSENT_PDF,
+        )  # type: ignore[arg-type]
         self.register_user(engine)
         user = self.storage.get_or_create_user("vk", "42")
         self.assertIsNone(user["client_id"])

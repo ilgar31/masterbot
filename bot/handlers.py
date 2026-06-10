@@ -35,6 +35,7 @@ class IncomingMessage:
 class BotReply:
     text: str
     keyboard: Keyboard | None = None
+    attachment_path: str | None = None
 
 
 TEXT_ACTIONS = {
@@ -140,10 +141,17 @@ def subscription_name(subscription: dict[str, Any]) -> str:
 
 
 class BotEngine:
-    def __init__(self, storage: Storage, api: ClinicApiClient, consent_file: str) -> None:
+    def __init__(
+        self,
+        storage: Storage,
+        api: ClinicApiClient,
+        consent_file: str,
+        consent_pdf_file: str = "Пользовательское соглашение.pdf",
+    ) -> None:
         self.storage = storage
         self.api = api
         self.consent_file = consent_file
+        self.consent_pdf_file = consent_pdf_file
 
     def handle(self, message: IncomingMessage) -> list[BotReply]:
         user = self.storage.get_or_create_user(message.platform, message.user_id)
@@ -171,12 +179,7 @@ class BotEngine:
     def _start(self, user: dict[str, Any]) -> list[BotReply]:
         if not user.get("consent_accepted_at"):
             return [
-                BotReply(
-                    "Здравствуйте! Я помогу быстро разобраться с абонементом: посмотреть статус, выбрать тариф и оставить заявку на оплату.\n\n"
-                    "Для работы мне нужно ваше согласие на обработку персональных данных.\n\n"
-                    + self._consent_text(),
-                    consent_keyboard(),
-                )
+                self._consent_reply()
             ]
         if not user.get("phone") or not user.get("client_id"):
             self.storage.update_user(user["id"], state="awaiting_phone")
@@ -184,13 +187,20 @@ class BotEngine:
         return [self._main_menu_reply("Рада снова видеть вас 🙂 Что посмотрим?")]
 
     def _consent_text(self) -> str:
-        try:
-            return Path(self.consent_file).read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            return (
-                "Чтобы бот мог сохранить профиль, показать абонемент и передать заявку администратору, "
-                "нужно согласие на обработку персональных данных. Текст согласия хранится в файле consent.txt."
-            )
+        return (
+            "Здравствуйте! Я бот клиники Master, помогу быстро разобраться с абонементом: "
+            "посмотреть статус, выбрать тариф и приобрести его.\n\n"
+            "Нажимая кнопку «Принимаю», вы даете согласие стоматологической клинике "
+            "на обработку персональных данных."
+        )
+
+    def _consent_reply(self) -> BotReply:
+        attachment_path = self.consent_pdf_file if Path(self.consent_pdf_file).exists() else None
+        return BotReply(
+            self._consent_text(),
+            consent_keyboard(),
+            attachment_path=attachment_path,
+        )
 
     def _consent_flow(
         self,
@@ -218,7 +228,7 @@ class BotEngine:
                 )
             ]
 
-        return [BotReply(self._consent_text(), consent_keyboard())]
+        return [self._consent_reply()]
 
     def _ask_phone_text(self) -> str:
         return (

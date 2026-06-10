@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import random
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,8 +20,15 @@ class VkMessenger:
         self.api_version = api_version
         self.session = requests.Session()
         self._name_cache: dict[int, str] = {}
+        self._document_cache: dict[str, str] = {}
 
-    def send_message(self, peer_id: int, text: str, keyboard: str | None = None) -> None:
+    def send_message(
+        self,
+        peer_id: int,
+        text: str,
+        keyboard: str | None = None,
+        attachment_path: str | None = None,
+    ) -> None:
         payload: dict[str, Any] = {
             "access_token": self.token,
             "v": self.api_version,
@@ -30,6 +38,10 @@ class VkMessenger:
         }
         if keyboard:
             payload["keyboard"] = keyboard
+        if attachment_path:
+            attachment = self._document_attachment(peer_id, attachment_path)
+            if attachment:
+                payload["attachment"] = attachment
 
         response = self.session.post(
             "https://api.vk.com/method/messages.send",
@@ -41,9 +53,73 @@ class VkMessenger:
         if "error" in data:
             error = data["error"]
             if error.get("error_code") == 912 and keyboard:
-                self.send_message(peer_id=peer_id, text=text, keyboard=None)
+                self.send_message(
+                    peer_id=peer_id,
+                    text=text,
+                    keyboard=None,
+                    attachment_path=attachment_path,
+                )
                 return
             raise RuntimeError(f"VK API error: {data['error']}")
+
+    def _document_attachment(self, peer_id: int, file_path: str) -> str | None:
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            return None
+
+        cache_key = str(path.resolve())
+        cached = self._document_cache.get(cache_key)
+        if cached:
+            return cached
+
+        try:
+            upload_server = _vk_api_call(
+                self.session,
+                "docs.getMessagesUploadServer",
+                {
+                    "access_token": self.token,
+                    "v": self.api_version,
+                    "type": "doc",
+                    "peer_id": peer_id,
+                },
+            )
+            if not isinstance(upload_server, dict) or not upload_server.get("upload_url"):
+                raise RuntimeError(f"Unexpected upload server response: {upload_server}")
+
+            with path.open("rb") as file_obj:
+                upload_response = self.session.post(
+                    str(upload_server["upload_url"]),
+                    files={"file": (path.name, file_obj, "application/pdf")},
+                    timeout=30,
+                )
+            upload_response.raise_for_status()
+            upload_data = upload_response.json()
+            uploaded_file = upload_data.get("file")
+            if not uploaded_file:
+                raise RuntimeError(f"VK document upload failed: {upload_data}")
+
+            saved = _vk_api_call(
+                self.session,
+                "docs.save",
+                {
+                    "access_token": self.token,
+                    "v": self.api_version,
+                    "file": uploaded_file,
+                    "title": path.stem,
+                },
+            )
+            doc = _extract_saved_doc(saved)
+            if not doc:
+                raise RuntimeError(f"VK docs.save returned unexpected response: {saved}")
+            access_key = doc.get("access_key")
+            attachment = f"doc{doc['owner_id']}_{doc['id']}"
+            if access_key:
+                attachment += f"_{access_key}"
+            self._document_cache[cache_key] = attachment
+            return attachment
+        except Exception as exc:
+            print(f"Не удалось загрузить документ VK {path}: {exc}")
+            return None
 
     def get_user_name(self, user_id: int) -> str | None:
         if user_id in self._name_cache:
@@ -109,6 +185,21 @@ def _parse_payload(raw: Any) -> dict[str, Any] | None:
     return None
 
 
+def _extract_saved_doc(data: Any) -> dict[str, Any] | None:
+    if isinstance(data, dict):
+        doc = data.get("doc")
+        if isinstance(doc, dict) and doc.get("id") and doc.get("owner_id"):
+            return doc
+        if data.get("type") == "doc" and data.get("id") and data.get("owner_id"):
+            return data
+    if isinstance(data, list):
+        for item in data:
+            doc = _extract_saved_doc(item)
+            if doc:
+                return doc
+    return None
+
+
 def _extract_phone(message: dict[str, Any]) -> str | None:
     for attachment in message.get("attachments") or []:
         if not isinstance(attachment, dict):
@@ -147,6 +238,7 @@ def handle_vk_message_event(
             peer_id=peer_id,
             text=reply.text,
             keyboard=to_vk_keyboard(reply.keyboard),
+            attachment_path=reply.attachment_path,
         )
 
 

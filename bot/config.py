@@ -37,6 +37,7 @@ class Settings:
     api_timeout: float
     database_path: str
     consent_file: str
+    consent_pdf_file: str
     vk_group_token: str | None
     vk_group_id: str | None
     vk_confirmation_token: str | None
@@ -64,6 +65,7 @@ class Settings:
             api_timeout=float(os.getenv("BOT_API_TIMEOUT", "5")),
             database_path=os.getenv("BOT_DATABASE_PATH", "data/bot.sqlite3"),
             consent_file=os.getenv("BOT_CONSENT_FILE", "consent.txt"),
+            consent_pdf_file=os.getenv("BOT_CONSENT_PDF_FILE", "Пользовательское соглашение.pdf"),
             vk_group_token=os.getenv("VK_GROUP_TOKEN"),
             vk_group_id=os.getenv("VK_GROUP_ID"),
             vk_confirmation_token=os.getenv("VK_CONFIRMATION_TOKEN"),
