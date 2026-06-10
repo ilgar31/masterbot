@@ -137,9 +137,9 @@ class ClinicApiClient:
     def _client_payload(payload: dict[str, Any]) -> dict[str, Any]:
         full_name = str(payload.get("full_name") or payload.get("name") or "").strip()
         parts = [part for part in full_name.split() if part]
-        name = str(payload.get("name") or (parts[0] if parts else "Клиент")).strip()
+        name = str(payload.get("first_name") or (parts[0] if parts else payload.get("name") or "Клиент")).strip()
         surname = str(payload.get("surname") or (parts[1] if len(parts) > 1 else "Без фамилии")).strip()
-        patronymic = str(payload.get("patronymic") or (" ".join(parts[2:]) if len(parts) > 2 else "-")).strip()
+        patronymic = str(payload.get("patronymic") or (" ".join(parts[2:]) if len(parts) > 2 else "")).strip()
         phone = str(payload.get("phone") or "").strip()
         if phone and not phone.startswith("+"):
             phone = f"+{phone}"
@@ -147,7 +147,7 @@ class ClinicApiClient:
         result: dict[str, Any] = {
             "name": name,
             "surname": surname,
-            "patronymic": patronymic or "-",
+            "patronymic": patronymic,
             "age": int(payload.get("age") or 1),
             "phone": phone,
         }

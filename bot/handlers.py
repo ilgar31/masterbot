@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +143,23 @@ def subscription_name(subscription: dict[str, Any]) -> str:
     )
 
 
+def parse_birth_date(value: str) -> date | None:
+    raw = value.strip()
+    for pattern in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            birth_date = datetime.strptime(raw, pattern).date()
+        except ValueError:
+            continue
+        if date(1900, 1, 1) <= birth_date <= date.today():
+            return birth_date
+    return None
+
+
+def calculate_age(birth_date: date) -> int:
+    today = date.today()
+    return today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+
+
 def subscription_is_active(subscription: dict[str, Any] | None) -> bool:
     if not subscription:
         return False
@@ -251,8 +268,7 @@ class BotEngine:
     def _ask_phone_text(self) -> str:
         return (
             "Напишите номер телефона, который хотите использовать для входа.\n\n"
-            "Пример: +7 900 000-00-00\n"
-            "VK не передает номер автоматически, поэтому его нужно отправить сообщением."
+            "Пример: +7 900 000-00-00"
         )
 
     def _auth_flow(
@@ -265,6 +281,9 @@ class BotEngine:
 
         if state == "awaiting_name":
             return self._handle_name(user, message, action)
+
+        if state == "awaiting_birth_date":
+            return self._handle_birth_date(user, message)
 
         if state == "awaiting_email":
             return self._handle_email(user, message, action)
@@ -314,6 +333,30 @@ class BotEngine:
         temp = self.storage.get_temp(user)
         temp["full_name"] = full_name
         self.storage.set_temp(user["id"], temp)
+        self.storage.update_user(user["id"], state="awaiting_birth_date")
+        return [
+            BotReply(
+                "Отлично. Теперь напишите дату рождения, чтобы я корректно указала возраст в профиле.\n\n"
+                "Пример: 15.04.1995",
+                phone_keyboard(),
+            )
+        ]
+
+    def _handle_birth_date(self, user: dict[str, Any], message: IncomingMessage) -> list[BotReply]:
+        birth_date = parse_birth_date(message.text or "")
+        if not birth_date:
+            return [
+                BotReply(
+                    "Не получилось разобрать дату. Напишите, пожалуйста, в формате ДД.ММ.ГГГГ.\n\n"
+                    "Пример: 15.04.1995",
+                    phone_keyboard(),
+                )
+            ]
+
+        temp = self.storage.get_temp(user)
+        temp["birth_date"] = birth_date.isoformat()
+        temp["age"] = calculate_age(birth_date)
+        self.storage.set_temp(user["id"], temp)
         self.storage.update_user(user["id"], state="awaiting_email")
         return [
             BotReply(
@@ -342,14 +385,15 @@ class BotEngine:
         temp = self.storage.get_temp(user)
         phone = temp.get("phone")
         full_name = temp.get("full_name")
-        if not phone or not full_name:
+        age = temp.get("age")
+        if not phone or not full_name or not age:
             self.storage.update_user(user["id"], state="awaiting_phone", temp_json="{}")
             return [BotReply(self._ask_phone_text(), phone_keyboard())]
 
         payload = {
             "phone": phone,
             "full_name": full_name,
-            "name": full_name,
+            "age": age,
             "email": email,
         }
         try:
@@ -464,8 +508,7 @@ class BotEngine:
             return BotReply(
                 "🦷 Ваша подписка\n"
                 "Статус: Не активна\n\n"
-                "Пока у вас нет активного абонемента. Выберите подходящий тариф: так проще заранее понимать, "
-                "какие услуги уже включены и сколько визитов доступно.",
+                "Пока у вас нет активного абонемента.",
                 main_menu_keyboard(),
             )
 

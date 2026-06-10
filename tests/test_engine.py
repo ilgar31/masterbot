@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from bot.api_client import ApiError
+from bot.api_client import ApiError, ClinicApiClient
 from bot.handlers import BotEngine, IncomingMessage, normalize_phone
 from bot.storage import Storage
 
@@ -20,6 +20,7 @@ class FakeApi:
     def create_client(self, payload: dict[str, Any]) -> dict[str, Any]:
         client_id = "client-1"
         self.clients[client_id] = {"id": client_id, **payload}
+        self.last_payload = payload
         return {"id": client_id}
 
     def find_client_by_phone(self, phone: str) -> dict[str, Any] | None:
@@ -116,12 +117,27 @@ class EngineTest(unittest.TestCase):
                 name="Иван Иванов",
             )
         )
+        target.handle(IncomingMessage("vk", "42", "15.04.1995"))
         target.handle(IncomingMessage("vk", "42", payload={"action": "skip_email"}))
 
     def test_normalize_phone(self) -> None:
         self.assertEqual(normalize_phone("+7 900 000-00-00"), "79000000000")
         self.assertEqual(normalize_phone("8 (900) 000-00-00"), "79000000000")
         self.assertIsNone(normalize_phone("123"))
+
+    def test_client_payload_splits_name_without_patronymic_duplication(self) -> None:
+        payload = ClinicApiClient._client_payload(
+            {
+                "phone": "79000000000",
+                "full_name": "Ильгар Багиш",
+                "age": 33,
+                "email": "",
+            }
+        )
+        self.assertEqual(payload["name"], "Ильгар")
+        self.assertEqual(payload["surname"], "Багиш")
+        self.assertEqual(payload["patronymic"], "")
+        self.assertEqual(payload["age"], 33)
 
     def test_registration_and_payment_stub_flow(self) -> None:
         first = self.engine.handle(IncomingMessage("vk", "42", "/start"))
@@ -145,12 +161,17 @@ class EngineTest(unittest.TestCase):
                 name="Иван Иванов",
             )
         )
-        self.assertIn("email", name[0].text.lower())
+        self.assertIn("дату рождения", name[0].text.lower())
+
+        birth_date = self.engine.handle(IncomingMessage("vk", "42", "15.04.1995"))
+        self.assertIn("email", birth_date[0].text.lower())
 
         done = self.engine.handle(
             IncomingMessage("vk", "42", payload={"action": "skip_email"})
         )
         self.assertIn("Готово", done[0].text)
+        self.assertGreaterEqual(self.api.last_payload["age"], 30)
+        self.assertEqual(self.api.last_payload["full_name"], "Иван Иванов")
 
         subscription = self.engine.handle(
             IncomingMessage("vk", "42", payload={"action": "my_subscription"})
